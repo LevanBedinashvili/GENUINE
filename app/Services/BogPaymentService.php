@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Contracts\PaymentGatewayContract;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
@@ -10,10 +11,11 @@ use Exception;
 /**
  * Bank of Georgia Payment Service
  * Implements BOG Payments API v1
+ * Implements PaymentGatewayContract for dependency injection
  * 
  * API Documentation: https://api.bog.ge/docs/payments/
  */
-class BogPaymentService
+class BogPaymentService implements PaymentGatewayContract
 {
     private string $clientId;
     private string $clientSecret;
@@ -483,5 +485,18 @@ class BogPaymentService
     public function isTestMode(): bool
     {
         return $this->testMode;
+    }
+
+    /**
+     * Verify payment callback signature
+     * Implements PaymentGatewayContract::verifySignature
+     *
+     * @param array $data Callback payload data
+     * @param string $signature Signature from callback
+     * @return bool True if signature is valid
+     */
+    public function verifySignature(array $data, string $signature): bool
+    {
+        return (new BogPaymentSignatureValidator())->verify($data, $signature);
     }
 }

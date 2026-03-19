@@ -2,123 +2,56 @@
 
 namespace App\Http\Controllers;
 
+use App\Contracts\PaymentGatewayContract;
+use App\Services\PaymentService;
+use App\Services\BogPaymentSignatureValidator;
+use App\Services\DashboardStatsService;
 use App\Models\Transaction;
-use App\Models\ShopItem;
-use App\Models\Account;
-use App\Services\BogPaymentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\ValidationException;
 
 class PaymentController extends Controller
 {
-    private BogPaymentService $bogPaymentService;
-
-    public function __construct(BogPaymentService $bogPaymentService)
-    {
-        $this->bogPaymentService = $bogPaymentService;
+    /**
+     * Payment Service (handles business logic)
+     * PaymentGatewayContract (implements payment gateway)
+     */
+    public function __construct(
+        private PaymentService $paymentService,
+        private PaymentGatewayContract $gateway,
+        private DashboardStatsService $statsService
+    ) {
     }
 
+    /**
+     * Create a new payment order
+     * 
+     * Input validation:
+     * - Username: 1-24 chars, alphanumeric + _ -
+     * - Shop item: must exist
+     * - Amount: 0.01 to 999999
+     * - Agreement: must be accepted
+     * 
+     * Process:
+     * 1. Validate reCAPTCHA
+     * 2. Validate input
+     * 3. Create transaction via PaymentService
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function createPayment(Request $request)
     {
         try {
-
-            $recaptchaToken = $request->input('recaptcha_token');
-            $recaptchaSecret = config('services.recaptcha.secret_key');
-            
-            if ($recaptchaSecret) {
-                if (!$recaptchaToken) {
-                    Log::channel('payments')->warning('Missing reCAPTCHA token', [
-                        'username' => $request->string('username'),
-                        'ip' => $request->ip(),
-                        'user_agent' => $request->userAgent(),
-                    ]);
-                    
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'reCAPTCHA აუცილებელია. გთხოვთ დაადასტუროთ, რომ არ ხართ რობოტი.',
-                    ], 422);
-                }
-
-                try {
-                    $recaptchaResponse = file_get_contents(
-                        "https://www.google.com/recaptcha/api/siteverify?secret=" . 
-                        urlencode($recaptchaSecret) . 
-                        "&response=" . urlencode($recaptchaToken) . 
-                        "&remoteip=" . urlencode($request->ip())
-                    );
-                    
-                    if ($recaptchaResponse === false) {
-                        throw new \Exception('Failed to verify reCAPTCHA with Google API');
-                    }
-                    
-                    $recaptchaData = json_decode($recaptchaResponse, true);
-
-                    if (!isset($recaptchaData['success']) || !$recaptchaData['success']) {
-                        Log::channel('payments')->warning('reCAPTCHA verification failed', [
-                            'recaptcha_response' => $recaptchaData,
-                            'ip' => $request->ip(),
-                            'username' => $request->string('username'),
-                        ]);
-                        
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'reCAPTCHA ვერიფიკაცია ვერ მოხერხდა. გთხოვთ დაადასტუროთ, რომ არ ხართ რობოტი.',
-                        ], 422);
-                    }
-                    
-                    if (isset($recaptchaData['score'])) {
-                        $minScore = config('services.recaptcha.min_score', 0.5);
-                        if ($recaptchaData['score'] < $minScore) {
-                            Log::channel('payments')->warning('reCAPTCHA score too low (suspected bot)', [
-                                'score' => $recaptchaData['score'],
-                                'min_score' => $minScore,
-                                'ip' => $request->ip(),
-                                'username' => $request->string('username'),
-                            ]);
-                            
-                            return response()->json([
-                                'success' => false,
-                                'message' => 'reCAPTCHA ვერიფიკაცია ვერ მოხერხდა. რობოტის სავარაუდო ქცევა აღმოჩნდა.',
-                            ], 422);
-                        }
-                    }
-                    
-                    Log::channel('payments')->info('reCAPTCHA verification successful', [
-                        'username' => $request->string('username'),
-                        'score' => $recaptchaData['score'] ?? 'N/A',
-                        'action' => $recaptchaData['action'] ?? 'N/A',
-                    ]);
-                    
-                } catch (\Exception $e) {
-                    Log::channel('payments')->error('reCAPTCHA verification exception', [
-                        'error' => $e->getMessage(),
-                        'ip' => $request->ip(),
-                        'username' => $request->string('username'),
-                    ]);
-                    
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'reCAPTCHA სერვერის შეცდომა. სცადეთ ხელახლა.',
-                    ], 500);
-                }
-            } else {
-                Log::channel('payments')->critical('reCAPTCHA is NOT CONFIGURED - Bot protection disabled!', [
-                    'username' => $request->string('username'),
-                    'shop_item_id' => $request->integer('shop_item_id'),
-                    'ip' => $request->ip(),
-                ]);
-            }
-
-            
+            // Validate input
             $validator = Validator::make($request->all(), [
                 'username' => ['required', 'string', 'min:1', 'max:24', 'regex:/^[a-zA-Z0-9_-]+$/'],
                 'shop_item_id' => ['required', 'integer', 'exists:shop_items,id'],
                 'amount' => ['required', 'numeric', 'min:0.01', 'max:999999'],
                 'agree' => ['required', 'accepted'],
-                'recaptcha_token' => ['nullable', 'string'],
+                'recaptcha_token' => ['required_if:env,production', 'nullable', 'string'],
             ], [
                 'username.required' => 'სახელი სერვერზე აუცილებელია',
                 'username.regex' => 'სახელი შეიძლება შეიცავდეს მხოლოდ ლათინურ ასოებს, რიცხვებს, _ და -',
@@ -134,136 +67,52 @@ class PaymentController extends Controller
                 ], 422);
             }
 
-            $shopItem = ShopItem::findOrFail($request->integer('shop_item_id'));
+            // Use PaymentService to handle business logic
+            $result = $this->paymentService->createPayment($validator->validated());
 
-            $account = Account::where('playerName', $request->string('username'))->first();
-            if (!$account) {
-                Log::channel('payments')->warning('Payment attempt with non-existent account', [
-                    'username' => $request->string('username'),
-                ]);
-                return response()->json([
-                    'success' => false,
-                    'message' => 'ანგარიში ვერ მოიძებნა',
-                ], 422);
-            }
-
-            $result = DB::transaction(function () use ($request, $shopItem, $account) {
-                $externalOrderId = 'GEN-' . uniqid();
-                $transaction = Transaction::create([
-                    'account_id' => $account->Id,
-                    'shop_item_id' => $shopItem->id,
-                    'amount' => $request->float('amount'),
-                    'currency_type' => Transaction::CURRENCY_MONEY,
-                    'status' => Transaction::STATUS_PENDING,
-                    'payment_method' => 'Credit Card',
-                    'ip_address' => $request->ip(),
-                    'metadata' => [
-                        'username' => $request->string('username'),
-                        'player_name' => $account->playerName,
-                        'external_order_id' => $externalOrderId,
-                    ],
-                ]);
-
-                Log::channel('payments')->info('Local transaction created', [
-                    'transaction_id' => $transaction->id,
-                    'account_id' => $account->Id,
-                    'amount' => $transaction->amount,
-                    'external_order_id' => $externalOrderId,
-                ]);
-
-                try {
-                    $bogOrder = $this->bogPaymentService->createOrder([
-                        'external_order_id' => $externalOrderId,
-                        'callback_url' => route('payment.callback'),
-                        'purchase_units' => [
-                            'currency' => 'GEL',
-                            'total_amount' => $transaction->amount,
-                            'basket' => [
-                                [
-                                    'product_id' => (string) $shopItem->id,
-                                    'quantity' => 1,
-                                    'unit_price' => $transaction->amount,
-                                    'description' => $shopItem->name,
-                                ],
-                            ],
-                        ],
-                        'redirect_urls' => [
-                            'success' => route('payment.success', ['transaction_id' => $transaction->id]),
-                            'fail' => route('payment.fail', ['transaction_id' => $transaction->id]),
-                        ],
-                        'buyer' => [
-                            'full_name' => $account->playerName,
-                        ],
-                        'application_type' => 'web',
-                        'capture' => 'automatic',
-                    ], [
-                        'language' => 'ka',
-                        'theme' => 'dark',
-                    ]);
-
-                    $transaction->update([
-                        'external_tx_id' => $bogOrder['id'],
-                        'payment_response' => ['order_created' => $bogOrder],
-                    ]);
-
-                    Log::channel('payments')->info('BOG order created successfully', [
-                        'transaction_id' => $transaction->id,
-                        'bog_order_id' => $bogOrder['id'],
-                    ]);
-
-                    return [
-                        'success' => true,
-                        'redirect_url' => $bogOrder['redirect_url'],
-                        'transaction_id' => $transaction->id,
-                    ];
-
-                } catch (\Exception $e) {
-                    Log::channel('payments')->error('BOG order creation failed', [
-                        'transaction_id' => $transaction->id,
-                        'error' => $e->getMessage(),
-                    ]);
-                    throw $e;
-                }
-            });
-
-            return response()->json($result);
+            return response()->json($result, 200);
 
         } catch (\Exception $e) {
             Log::channel('payments')->error('Payment creation error', [
                 'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
+                'ip' => $request->ip(),
             ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'გადახდის ინიციირება ვერ მოხერხდა',
             ], 500);
         }
     }
+
+    /**
+     * Handle payment redirect after returning from BOG payment page
+     * 
+     * Display payment status based on transaction status
+     * 
+     * @param Request $request
+     * @param string $transaction_id
+     * @return \Illuminate\Contracts\View\View
+     */
     public function handleRedirect(Request $request, $transaction_id)
     {
         try {
-            $transaction = Transaction::findOrFail($transaction_id);
+            // Load transaction with relationships
+            $transaction = $this->paymentService->getTransaction($transaction_id);
             
-            // Determine status from route name
-            $routeName = $request->route()->getName();
-            $redirectStatus = str_ends_with($routeName, '.success') ? 'success' : 'fail';
-
-            Log::channel('payments')->info('Payment redirect received', [
-                'transaction_id' => $transaction->id,
-                'redirect_status' => $redirectStatus,
-                'current_status' => $transaction->status,
-                'ip' => $request->ip(),
-            ]);
-
-            // Get current transaction status for display
+            // Determine status message from transaction
             $message = match ($transaction->status) {
                 Transaction::STATUS_COMPLETED => 'გადახდა წარმატებით დასრულდა!',
                 Transaction::STATUS_FAILED => 'გადახდა ვერ მოხერხდა. გთხოვთ სცადოთ ხელახლა.',
-                Transaction::STATUS_PENDING => $redirectStatus === 'success' 
-                    ? 'გადახდა დამუშავდება. გთხოვთ მოითმინოთ...' 
-                    : 'გადახდა ვერ მოხერხდა.',
+                Transaction::STATUS_PENDING => 'გადახდა დამუშავდება. გთხოვთ მოითმინოთ...',
                 default => 'გადახდის სტატუსი უცნობია.',
             };
+
+            Log::channel('payments')->info('Payment redirect received', [
+                'transaction_id' => $transaction->id,
+                'status' => $transaction->status,
+                'ip' => $request->ip(),
+            ]);
 
             return view('payment-status', [
                 'transaction' => $transaction,
@@ -271,7 +120,7 @@ class PaymentController extends Controller
                 'message' => $message,
             ]);
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
             Log::channel('payments')->error('Redirect handling error', [
                 'transaction_id' => $transaction_id,
                 'error' => $e->getMessage(),
@@ -284,53 +133,60 @@ class PaymentController extends Controller
         }
     }
 
+    /**
+     * Handle BOG payment callback
+     * 
+     * Validates BOG callback signature and updates transaction status
+     * All business logic delegated to PaymentService
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function handleCallback(Request $request)
     {
         $startTime = microtime(true);
+        $signatureValidator = new BogPaymentSignatureValidator();
         
         try {
-            $rawPayload = $request->getContent();
             $callbackData = $request->json()->all();
-            $signature = $request->header('Callback-Signature');
+            $signature = $request->header('X-BOG-Signature') ?? $request->header('Callback-Signature');
 
-            Log::channel('payments')->info('Webhook callback received', [
-                'event' => $callbackData['event'] ?? 'unknown',
+            Log::channel('payments')->info('Payment callback received', [
                 'ip' => $request->ip(),
                 'has_signature' => !empty($signature),
-                'payload_size' => strlen($rawPayload),
+                'transaction_id' => $callbackData['transaction_id'] ?? 'unknown',
             ]);
 
-            if (!empty($signature)) {
-                $isValid = $this->bogPaymentService->verifyCallbackSignature($signature, $rawPayload);
-                if (!$isValid) {
-                    Log::channel('payments')->warning('⚠️ Invalid callback signature', [
-                        'event' => $callbackData['event'] ?? null,
-                    ]);
-                }
+            // SECURITY: Verify callback signature
+            if (empty($signature) || !$signatureValidator->verify($callbackData, $signature)) {
+                Log::warning('⚠️ SECURITY: Invalid BOG callback signature!', [
+                    'ip' => $request->ip(),
+                    'transaction_id' => $callbackData['transaction_id'] ?? 'unknown',
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Signature verification failed',
+                ], 401);
             }
 
-            $parsedData = $this->bogPaymentService->parseCallback($callbackData);
-            
-            Log::channel('payments')->debug('Callback parsed', [
-                'event' => $parsedData['event'],
-                'order_id' => $parsedData['order_id'],
-                'external_order_id' => $parsedData['external_order_id'],
-                'status' => $parsedData['status'],
-                'amount' => $parsedData['amount'],
-            ]);
-
-            $transaction = Transaction::whereJsonContains('metadata->external_order_id', $parsedData['external_order_id'])
-                ->first();
-
-            if (!$transaction) {
-                // Fallback: try to find by BOG order ID
-                $transaction = Transaction::where('external_tx_id', $parsedData['order_id'])->first();
+            // Validate required fields
+            if (empty($callbackData['transaction_id']) || empty($callbackData['amount']) || empty($callbackData['status'])) {
+                Log::error('Invalid callback data structure', [
+                    'data_keys' => array_keys($callbackData),
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid callback data',
+                ], 400);
             }
 
+            // Find transaction
+            $transaction = Transaction::where('external_tx_id', $callbackData['transaction_id'])->first();
             if (!$transaction) {
-                Log::channel('payments')->error('Transaction not found for callback', [
-                    'external_order_id' => $parsedData['external_order_id'],
-                    'bog_order_id' => $parsedData['order_id'],
+                Log::error('Transaction not found for callback', [
+                    'external_tx_id' => $callbackData['transaction_id'],
                 ]);
                 
                 return response()->json([
@@ -339,63 +195,51 @@ class PaymentController extends Controller
                 ], 404);
             }
 
-            DB::transaction(function () use ($transaction, $parsedData, $callbackData) {
-                Log::channel('payments')->info('Processing callback for transaction', [
+            // Validate amount match
+            if ((float) $transaction->amount !== (float) $callbackData['amount']) {
+                Log::warning('⚠️ SECURITY: Payment amount mismatch!', [
                     'transaction_id' => $transaction->id,
-                    'current_status' => $transaction->status,
-                    'new_status' => $parsedData['status'],
+                    'expected_amount' => $transaction->amount,
+                    'callback_amount' => $callbackData['amount'],
                 ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Amount mismatch',
+                ], 400);
+            }
 
-                $status = strtolower($parsedData['status'] ?? 'unknown');
-                $paymentMethod = $parsedData['payment_method'] ?? 'Credit Card';
+            // Map status and update transaction
+            $newStatus = $this->mapBogStatusToTransactionStatus($callbackData['status']);
+            
+            if (!$signatureValidator->isValidStatusTransition($transaction->status, $newStatus)) {
+                Log::warning('Invalid payment status transition attempted', [
+                    'transaction_id' => $transaction->id,
+                    'current' => $transaction->status,
+                    'requested' => $newStatus,
+                ]);
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid status transition',
+                ], 400);
+            }
 
+            // Update transaction and invalidate cache
+            DB::transaction(function () use ($transaction, $callbackData, $newStatus) {
                 $transaction->update([
-                    'payment_method' => $paymentMethod,
+                    'status' => $newStatus,
+                    'payment_method' => $callbackData['payment_method'] ?? 'Bank Transfer',
+                    'payment_response' => array_merge(
+                        $transaction->payment_response ?? [],
+                        ['last_callback' => $callbackData + ['received_at' => now()->toIso8601String()]]
+                    ),
                 ]);
-
-                if (in_array($status, ['completed', 'success'])) {
-                    if ($transaction->status === Transaction::STATUS_FAILED) {
-                        Log::channel('payments')->warning('Transaction already failed, cannot complete', [
-                            'transaction_id' => $transaction->id,
-                            'callback_status' => $status,
-                        ]);
-                    } else {
-                        $transaction->update(['status' => Transaction::STATUS_COMPLETED]);
-                        Log::channel('payments')->info('Transaction COMPLETED via callback', [
-                            'transaction_id' => $transaction->id,
-                            'amount' => $parsedData['amount'],
-                            'method' => $paymentMethod,
-                        ]);
-                    }
-                } elseif (in_array($status, ['failed', 'declined', 'rejected', 'cancelled'])) {
-                    $transaction->update(['status' => Transaction::STATUS_FAILED]);
-                    Log::channel('payments')->warning('Transaction FAILED via callback', [
-                        'transaction_id' => $transaction->id,
-                        'reason' => $status,
-                    ]);
-                } else {
-                    Log::channel('payments')->info('Transaction status: ' . $status, [
-                        'transaction_id' => $transaction->id,
-                    ]);
-                }
-
-                $paymentResponse = $transaction->payment_response ?? [];
-                $paymentResponse['last_webhook'] = [
-                    'event' => $parsedData['event'],
-                    'status' => $status,
-                    'amount' => $parsedData['amount'],
-                    'payment_method' => $paymentMethod,
-                    'received_at' => now()->toIso8601String(),
-                    'raw_data' => $callbackData,
-                ];
-                
-                $transaction->update(['payment_response' => $paymentResponse]);
+                $this->statsService->invalidate();
             });
 
-            $duration = round((microtime(true) - $startTime) * 1000, 2);
-            Log::channel('payments')->info('✓ Callback processed successfully', [
+            Log::channel('payments')->info('✓ Callback processed', [
                 'transaction_id' => $transaction->id,
-                'duration_ms' => $duration,
+                'new_status' => $newStatus,
+                'duration_ms' => round((microtime(true) - $startTime) * 1000, 2),
             ]);
 
             return response()->json([
@@ -409,7 +253,6 @@ class PaymentController extends Controller
                 'error' => $e->getMessage(),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString(),
             ]);
 
             return response()->json([
@@ -418,10 +261,21 @@ class PaymentController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Check payment status
+     * 
+     * Query BOG API for current transaction status (cached for 10 seconds)
+     * 
+     * @param Request $request
+     * @param string $transaction_id
+     * @return \Illuminate\Http\JsonResponse
+     */
     public function checkStatus(Request $request, $transaction_id)
     {
         try {
-            $transaction = Transaction::findOrFail($transaction_id);
+            // Load transaction using PaymentService
+            $transaction = $this->paymentService->getTransaction($transaction_id);
 
             if ($transaction->isCompleted()) {
                 return response()->json([
@@ -439,63 +293,33 @@ class PaymentController extends Controller
                 ]);
             }
 
-            Log::channel('payments')->debug('Manual status check', [
-                'transaction_id' => $transaction->id,
-                'external_tx_id' => $transaction->external_tx_id,
-            ]);
+            // Check status with BOG (cached for 10 seconds)
+            $this->paymentService->checkTransactionStatus($transaction_id);
+            
+            // Reload transaction to get updated status
+            $transaction = $this->paymentService->getTransaction($transaction_id);
 
-            try {
-                $orderDetails = $this->bogPaymentService->getOrderDetails($transaction->external_tx_id);
-                $status = $orderDetails['order_status']['key'] ?? 'unknown';
-
-                Log::channel('payments')->info('Status check result', [
-                    'transaction_id' => $transaction->id,
-                    'bog_status' => $status,
-                ]);
-
-                if (in_array($status, ['completed', 'success'])) {
-                    DB::transaction(function () use ($transaction, $orderDetails) {
-                        $transaction->update([
-                            'status' => Transaction::STATUS_COMPLETED,
-                            'payment_response' => array_merge(
-                                $transaction->payment_response ?? [],
-                                ['manual_check' => $orderDetails]
-                            ),
-                        ]);
-                    });
-                    return response()->json([
-                        'success' => true,
-                        'status' => Transaction::STATUS_COMPLETED,
-                        'message' => 'გადახდა წარმატებით დასრულდა',
-                    ]);
-                } elseif (in_array($status, ['failed', 'declined', 'rejected'])) {
-                    DB::transaction(function () use ($transaction) {
-                        $transaction->update(['status' => Transaction::STATUS_FAILED]);
-                    });
-                    return response()->json([
-                        'success' => false,
-                        'status' => Transaction::STATUS_FAILED,
-                        'message' => 'გადახდა ვერ მოხერხდა',
-                    ]);
-                } else {
-                    return response()->json([
-                        'success' => null,
-                        'status' => Transaction::STATUS_PENDING,
-                        'message' => 'გადახდა მუშავდება, გთხოვთ მოითმინოთ...',
-                    ]);
-                }
-            } catch (\Exception $e) {
-                Log::channel('payments')->warning('BOG status check failed', [
-                    'transaction_id' => $transaction->id,
-                    'error' => $e->getMessage(),
-                ]);
-                
+            if ($transaction->isCompleted()) {
                 return response()->json([
-                    'success' => null,
-                    'status' => Transaction::STATUS_PENDING,
-                    'message' => 'სტატუসი დადგენილი ვერ იქნა, ცდილობს ხელახლა...',
+                    'success' => true,
+                    'status' => Transaction::STATUS_COMPLETED,
+                    'message' => 'გადახდა წარმატებით დასრულდა',
                 ]);
             }
+
+            if ($transaction->isFailed()) {
+                return response()->json([
+                    'success' => false,
+                    'status' => Transaction::STATUS_FAILED,
+                    'message' => 'გადახდა ვერ მოხერხდა',
+                ]);
+            }
+
+            return response()->json([
+                'success' => null,
+                'status' => Transaction::STATUS_PENDING,
+                'message' => 'გადახდა მუშავდება, გთხოვთ მოითმინოთ...',
+            ]);
 
         } catch (\Exception $e) {
             Log::channel('payments')->error('Status check error', [
@@ -508,5 +332,39 @@ class PaymentController extends Controller
                 'message' => 'სტატუსის შემოწმება ვერ მოხერხდა',
             ], 500);
         }
+    }
+
+    /**
+     * Map BOG payment status to internal Transaction status
+     * 
+     * @param string $bogStatus Status from BOG API
+     * @return string Internal transaction status constant
+     */
+    private function mapBogStatusToTransactionStatus(string $bogStatus): string
+    {
+        $statusMap = [
+            'succeeded' => Transaction::STATUS_COMPLETED,
+            'success' => Transaction::STATUS_COMPLETED,
+            'completed' => Transaction::STATUS_COMPLETED,
+            'captured' => Transaction::STATUS_COMPLETED,
+            
+            'failed' => Transaction::STATUS_FAILED,
+            'declined' => Transaction::STATUS_FAILED,
+            'rejected' => Transaction::STATUS_FAILED,
+            'cancelled' => Transaction::STATUS_FAILED,
+            'error' => Transaction::STATUS_FAILED,
+            
+            'pending' => Transaction::STATUS_PENDING,
+            'processing' => Transaction::STATUS_PENDING,
+        ];
+
+        $mappedStatus = $statusMap[strtolower($bogStatus)] ?? Transaction::STATUS_PENDING;
+
+        Log::debug('BOG status mapped', [
+            'bog_status' => $bogStatus,
+            'transaction_status' => $mappedStatus,
+        ]);
+
+        return $mappedStatus;
     }
 }

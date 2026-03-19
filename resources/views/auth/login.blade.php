@@ -216,12 +216,6 @@
 
             <button type="submit" class="btn-login">Login</button>
         </form>
-
-        <div class="login-footer">
-            <p>
-                <a href="{{ route('password.request') }}">Forgot your password?</a>
-            </p>
-        </div>
     </div>
 </div>
 @endsection

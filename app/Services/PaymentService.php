@@ -9,6 +9,7 @@ use App\Models\Account;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\URL;
 use Exception;
 
 /**
@@ -128,7 +129,7 @@ class PaymentService
     private function buildGatewayOrderData(Transaction $transaction): array
     {
         return [
-            'external_order_id' => 'GEN-' . uniqid(),
+            'external_order_id' => 'GEN-' . \Illuminate\Support\Str::uuid()->toString(),
             'callback_url' => route('payment.callback'),
             'purchase_units' => [
                 'currency' => 'GEL',
@@ -141,8 +142,8 @@ class PaymentService
                 ]],
             ],
             'redirect_urls' => [
-                'success' => route('payment.success', ['transaction_id' => $transaction->id]),
-                'fail' => route('payment.fail', ['transaction_id' => $transaction->id]),
+                'success' => URL::signedRoute('payment.success', ['transaction_id' => $transaction->id]),
+                'fail' => URL::signedRoute('payment.fail', ['transaction_id' => $transaction->id]),
             ],
             'buyer' => [
                 'full_name' => $transaction->account->playerName,
@@ -184,23 +185,34 @@ class PaymentService
         }
 
         try {
-            $bogStatus = $this->gateway->getOrderDetails(
+            $bogResponse = $this->gateway->getOrderDetails(
                 $transaction->external_tx_id
             );
 
+            // Extract BOG status from normalized response and map to internal status
+            $bogStatusKey = $bogResponse['order_status']['key'] ?? 'unknown';
+            $mappedStatus = $this->mapBogStatus($bogStatusKey);
+
+            // SAFETY: Never downgrade a terminal status (completed/failed)
+            if (in_array($transaction->status, [Transaction::STATUS_COMPLETED, Transaction::STATUS_FAILED])) {
+                Cache::put($cacheKey, $transaction->status, 10);
+                return $transaction->status;
+            }
+
             // Update if status changed
-            if ($bogStatus['status'] !== $transaction->status) {
-                $transaction->update(['status' => $bogStatus['status']]);
+            if ($mappedStatus !== $transaction->status) {
+                $transaction->update(['status' => $mappedStatus]);
                 Cache::forget($cacheKey);
                 $this->statsService->invalidate();
 
                 Log::channel('payments')->info('Transaction status updated', [
                     'transaction_id' => $transactionId,
-                    'new_status' => $bogStatus['status'],
+                    'bog_status' => $bogStatusKey,
+                    'new_status' => $mappedStatus,
                 ]);
             } else {
                 // Cache unchanged result for 10 seconds
-                Cache::put($cacheKey, $bogStatus['status'], 10);
+                Cache::put($cacheKey, $transaction->status, 10);
             }
 
             return $transaction->status;
@@ -223,5 +235,29 @@ class PaymentService
     {
         return Transaction::with(['account', 'shopItem'])
             ->findOrFail($transactionId);
+    }
+
+    /**
+     * Map BOG payment status to internal Transaction status
+     */
+    private function mapBogStatus(string $bogStatus): string
+    {
+        $statusMap = [
+            'succeeded' => Transaction::STATUS_COMPLETED,
+            'success' => Transaction::STATUS_COMPLETED,
+            'completed' => Transaction::STATUS_COMPLETED,
+            'captured' => Transaction::STATUS_COMPLETED,
+
+            'failed' => Transaction::STATUS_FAILED,
+            'declined' => Transaction::STATUS_FAILED,
+            'rejected' => Transaction::STATUS_FAILED,
+            'cancelled' => Transaction::STATUS_FAILED,
+            'error' => Transaction::STATUS_FAILED,
+
+            'pending' => Transaction::STATUS_PENDING,
+            'processing' => Transaction::STATUS_PENDING,
+        ];
+
+        return $statusMap[strtolower($bogStatus)] ?? Transaction::STATUS_PENDING;
     }
 }

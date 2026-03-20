@@ -9,22 +9,26 @@ Route::get('/', function () {
 Route::get('/shop', [\App\Http\Controllers\ShopController::class, 'index'])->name('shop');
 
 Route::prefix('payment')->name('payment.')->group(function () {
-    Route::post('/create', [\App\Http\Controllers\PaymentController::class, 'createPayment'])->name('create');
+    Route::post('/create', [\App\Http\Controllers\PaymentController::class, 'createPayment'])
+        ->middleware('shop.rate.limit')
+        ->name('create');
     
     Route::get('/success/{transaction_id}', [\App\Http\Controllers\PaymentController::class, 'handleRedirect'])
+        ->middleware('signed')
         ->name('success');
     
     Route::get('/fail/{transaction_id}', [\App\Http\Controllers\PaymentController::class, 'handleRedirect'])
+        ->middleware('signed')
         ->name('fail');
     
     Route::get('/redirect/{transaction_id}', [\App\Http\Controllers\PaymentController::class, 'handleRedirect'])
+        ->middleware('signed')
         ->name('redirect');
     
     Route::get('/check/{transaction_id}', [\App\Http\Controllers\PaymentController::class, 'checkStatus'])
         ->name('check');
     
     Route::post('/callback', [\App\Http\Controllers\PaymentController::class, 'handleCallback'])
-        ->withoutMiddleware(\App\Http\Middleware\VerifyCsrfToken::class)
         ->name('callback');
 });
 Route::get('/agreement', function () {

@@ -62,7 +62,7 @@ class MoneyValidator
      * Validate amount is positive and within acceptable range
      * @return bool True if amount is valid
      */
-    public static function isValid($amount, int $minAmount = 0, int $maxAmount = 999999): bool
+    public static function isValid($amount, $minAmount = '0.01', $maxAmount = 999999): bool
     {
         if (bccomp((string)$amount, (string)$minAmount, 2) < 0) {
             return false;

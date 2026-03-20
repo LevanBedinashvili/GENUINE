@@ -7,6 +7,7 @@ use App\Services\PaymentService;
 use App\Services\BogPaymentSignatureValidator;
 use App\Services\DashboardStatsService;
 use App\Models\Transaction;
+use App\Services\MoneyValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
@@ -195,8 +196,8 @@ class PaymentController extends Controller
                 ], 404);
             }
 
-            // Validate amount match
-            if ((float) $transaction->amount !== (float) $callbackData['amount']) {
+            // Validate amount match using bcmath for precise decimal comparison
+            if (!MoneyValidator::amountsEqual($transaction->amount, $callbackData['amount'])) {
                 Log::warning('⚠️ SECURITY: Payment amount mismatch!', [
                     'transaction_id' => $transaction->id,
                     'expected_amount' => $transaction->amount,
@@ -276,6 +277,14 @@ class PaymentController extends Controller
         try {
             // Load transaction using PaymentService
             $transaction = $this->paymentService->getTransaction($transaction_id);
+
+            // Verify ownership: only the original requester can check status
+            if ($transaction->ip_address !== $request->ip()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized',
+                ], 403);
+            }
 
             if ($transaction->isCompleted()) {
                 return response()->json([

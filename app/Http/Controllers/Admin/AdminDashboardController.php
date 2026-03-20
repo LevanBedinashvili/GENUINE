@@ -104,9 +104,12 @@ class AdminDashboardController extends Controller
             return redirect()->back()->with('error', 'Invalid player name length');
         }
 
+        // Escape SQL LIKE wildcards to prevent wildcard injection
+        $escapedName = str_replace(['%', '_', '\\'], ['\\%', '\\_', '\\\\'], $playerName);
+
         $transactions = Transaction::select('transactions.*')
             ->join('accounts', 'transactions.account_id', '=', 'accounts.Id')
-            ->where('accounts.playerName', 'LIKE', '%' . $playerName . '%')
+            ->where('accounts.playerName', 'LIKE', '%' . $escapedName . '%')
             ->with(['shopItem.category'])
             ->orderBy('transactions.created_at', 'desc')
             ->paginate(15);
@@ -124,10 +127,6 @@ class AdminDashboardController extends Controller
 
             if ($transaction->status !== Transaction::STATUS_PENDING) {
                 return redirect()->back()->with('error', 'Transaction already processed');
-            }
-
-            if ($transaction->status === Transaction::STATUS_FAILED) {
-                return redirect()->back()->with('error', 'Cannot approve failed transaction');
             }
 
             if (!Transaction::validateUniqueTransaction(

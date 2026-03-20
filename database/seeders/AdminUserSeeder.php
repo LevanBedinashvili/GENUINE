@@ -35,13 +35,16 @@ class AdminUserSeeder extends Seeder
         $randomPassword = Str::random(16);
 
         // Create default admin user with strong random password
-        $admin = User::create([
+        // is_admin is not mass-assignable, so we use forceFill
+        $admin = new User([
             'name' => 'Administrator',
             'email' => 'admin@genuine-rp.ge',
             'password' => Hash::make($randomPassword),
+        ]);
+        $admin->forceFill([
             'is_admin' => true,
             'email_verified_at' => now(),
-        ]);
+        ])->save();
 
         $this->command->info("✓ Admin user created successfully!");
         $this->command->warn("⚠️  TEMPORARY PASSWORD: {$randomPassword}");

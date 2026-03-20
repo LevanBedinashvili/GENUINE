@@ -28,11 +28,12 @@ class SecurityHeaders
 
         $response->header('Content-Security-Policy', 
             "default-src 'self'; " .
-            "script-src 'self' https://cdn.jsdelivr.net https://kit.fontawesome.com; " .
+            "script-src 'self' https://cdn.jsdelivr.net https://kit.fontawesome.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; " .
             "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " .
             "font-src 'self' https://fonts.gstatic.com https://kit-free.fontawesome.com; " .
             "img-src 'self' data: https:; " .
-            "connect-src 'self'; " .
+            "connect-src 'self' https://www.google.com/recaptcha/; " .
+            "frame-src https://www.google.com/recaptcha/ https://payment.bog.ge https://payment.sandbox.bog.ge; " .
             "frame-ancestors 'none';"
         );
 

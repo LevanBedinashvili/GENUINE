@@ -197,8 +197,6 @@ class Transaction extends Model
      */
     public static function generateOrderId(): string
     {
-        $timestamp = now()->timestamp;
-        $random = strtoupper(substr(md5(uniqid()), 0, 8));
-        return "ORD-{$timestamp}-{$random}";
+        return 'ORD-' . \Illuminate\Support\Str::uuid()->toString();
     }
 }

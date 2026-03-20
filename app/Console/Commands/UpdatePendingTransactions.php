@@ -95,7 +95,7 @@ class UpdatePendingTransactions extends Command
                     }
 
                     DB::transaction(function () use ($transaction, $bogStatus, $orderDetails, $verbose) {
-                        if (in_array($bogStatus, ['completed', 'success'])) {
+                        if (in_array($bogStatus, ['succeeded', 'completed', 'success', 'captured'])) {
                             $transaction->update(['status' => Transaction::STATUS_COMPLETED]);
                             
                             Log::channel('payments')->info('✓ Transaction auto-completed by scheduler', [
@@ -106,7 +106,7 @@ class UpdatePendingTransactions extends Command
                                 'completed_at' => now()->toIso8601String(),
                             ]);
 
-                        } elseif (in_array($bogStatus, ['failed', 'declined', 'rejected', 'cancelled'])) {
+                        } elseif (in_array($bogStatus, ['failed', 'declined', 'rejected', 'cancelled', 'error'])) {
                             $transaction->update(['status' => Transaction::STATUS_FAILED]);
                             
                             Log::channel('payments')->warning('✗ Transaction auto-failed by scheduler', [
@@ -129,11 +129,11 @@ class UpdatePendingTransactions extends Command
                         $transaction->update(['payment_response' => $paymentResponse]);
                     });
 
-                    if (in_array($bogStatus, ['completed', 'success'])) {
+                    if (in_array($bogStatus, ['succeeded', 'completed', 'success', 'captured'])) {
                         $this->line("  <fg=green>✅ COMPLETED</>");
                         $completed++;
                         $completedTransactionIds[] = $transaction->id;
-                    } elseif (in_array($bogStatus, ['failed', 'declined', 'rejected', 'cancelled'])) {
+                    } elseif (in_array($bogStatus, ['failed', 'declined', 'rejected', 'cancelled', 'error'])) {
                         $this->line("  <fg=red>❌ FAILED</>");
                         $failed++;
                         $failedTransactionIds[] = $transaction->id;

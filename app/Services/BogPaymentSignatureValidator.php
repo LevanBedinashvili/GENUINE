@@ -22,7 +22,7 @@ class BogPaymentSignatureValidator
 
     public function __construct()
     {
-        $this->publicKey = config('bog.public_key') ?? env('BOG_PUBLIC_KEY', '');
+        $this->publicKey = config('bog.public_key', '');
     }
 
     /**
@@ -96,24 +96,23 @@ class BogPaymentSignatureValidator
     /**
      * Validate payment status transition
      * 
-     * Ensures status changes follow valid transitions:
-     * - pending -> succeeded, failed, or cancelled
-     * - succeeded -> cannot change (payment complete)
-     * - failed -> cannot change
-     * - cancelled -> cannot change
+     * Ensures status changes follow valid transitions using INTERNAL status names:
+     * - pending -> completed or failed
+     * - completed -> cannot change (terminal state)
+     * - failed -> cannot change (terminal state)
      * 
      * @param string $currentStatus Current transaction status in database
-     * @param string $newStatus New status from BOG callback
+     * @param string $newStatus New status (already mapped to internal via mapBogStatusToTransactionStatus)
      * @return bool True if transition is valid
      */
     public function isValidStatusTransition(string $currentStatus, string $newStatus): bool
     {
-        // Define valid state transitions
+        // Define valid state transitions using INTERNAL status names
+        // mapBogStatusToTransactionStatus() already converts BOG statuses to internal ones
         $validTransitions = [
-            'pending' => ['succeeded', 'failed', 'cancelled'],
-            'succeeded' => [],  // Terminal state
-            'failed' => [],     // Terminal state
-            'cancelled' => [],  // Terminal state
+            'pending'   => ['completed', 'failed'],
+            'completed' => [],  // Terminal state
+            'failed'    => [],  // Terminal state
         ];
 
         // Check if transition is allowed

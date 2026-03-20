@@ -103,10 +103,13 @@ class ShopItemController extends Controller
 
     public function updateSortOrder(Request $request)
     {
-        $items = $request->get('items', []);
+        $validated = $request->validate([
+            'items' => 'required|array',
+            'items.*' => 'required|integer|exists:shop_items,id',
+        ]);
 
-        foreach ($items as $index => $itemId) {
-            ShopItem::find($itemId)->update(['sort_order' => $index]);
+        foreach ($validated['items'] as $index => $itemId) {
+            ShopItem::where('id', $itemId)->update(['sort_order' => $index]);
         }
 
         return response()->json(['success' => true]);

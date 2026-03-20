@@ -27,35 +27,23 @@ class BogPaymentService implements PaymentGatewayContract
 
     public function __construct()
     {
-        $this->clientId = config('bog.client_id') ?? env('BOG_CLIENT_ID');
-        $this->clientSecret = config('bog.client_secret') ?? env('BOG_CLIENT_SECRET');
-        $this->publicKey = config('bog.public_key') ?? env('BOG_PUBLIC_KEY');
-        $this->testMode = config('bog.test_mode') ?? env('BOG_TEST_MODE', false);
+        $this->clientId = config('bog.client_id', '');
+        $this->clientSecret = config('bog.client_secret', '');
+        $this->publicKey = config('bog.public_key', '');
+        $this->testMode = (bool) config('bog.test_mode', false);
+        $this->baseUrl = config('bog.base_url', $this->baseUrl);
+        $this->authUrl = config('bog.auth_url', $this->authUrl);
+        $this->paymentUrl = config('bog.payment_url', $this->paymentUrl);
     }
 
     /**
-     * Generate a UUID v4
+     * Generate a UUID v4 using Laravel's built-in Str::uuid()
      * 
      * @return string UUID v4 format
      */
     private function generateUuid4(): string
     {
-        // Generate 16 bytes (128 bits) of random data
-        $data = random_bytes(16);
-        
-        // Set version (4) and variant bits
-        $data[6] = chr(ord($data[6]) & 0x0f | 0x40); // version 4
-        $data[8] = chr(ord($data[8]) & 0x3f | 0x80); // variant bits
-        
-        // Convert to hexadecimal string with hyphens
-        return sprintf(
-            '%08x-%04x-%04x-%04x-%12x',
-            unpack('N', substr($data, 0, 4))[1],
-            unpack('n', substr($data, 4, 2))[1],
-            unpack('n', substr($data, 6, 2))[1],
-            unpack('n', substr($data, 8, 2))[1],
-            unpack('N', substr($data, 10, 6))[1] . unpack('n', substr($data, 14, 2))[1]
-        );
+        return \Illuminate\Support\Str::uuid()->toString();
     }
 
     /**
@@ -318,8 +306,8 @@ class BogPaymentService implements PaymentGatewayContract
     {
         try {
             if (empty($this->publicKey)) {
-                Log::channel('payments')->warning('BOG public key not configured, skipping signature verification');
-                return true; // In development, allow if no key configured
+                Log::channel('payments')->error('BOG public key not configured — rejecting signature');
+                return false;
             }
 
             // Format public key if needed

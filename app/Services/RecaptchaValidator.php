@@ -106,8 +106,13 @@ class RecaptchaValidator
             return false;
         }
 
-        // Check score meets minimum threshold
-        $score = $recaptchaResponse['score'] ?? 0;
+        // reCAPTCHA v2 (checkbox) does not return a score — success alone is sufficient
+        if (!isset($recaptchaResponse['score'])) {
+            return true;
+        }
+
+        // reCAPTCHA v3 — check score meets minimum threshold
+        $score = $recaptchaResponse['score'];
         if ($score < $minScore) {
             Log::channel('payments')->warning('reCAPTCHA score too low', [
                 'score' => $score,

@@ -18,8 +18,19 @@ return Application::configure(basePath: dirname(__DIR__))
         },
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Global middleware — applied to every request
+        $middleware->append(\App\Http\Middleware\SecurityHeaders::class);
+
+        // Route middleware aliases
         $middleware->alias([
             'admin.auth' => \App\Http\Middleware\AdminAuth::class,
+            'shop.rate.limit' => \App\Http\Middleware\ShopRateLimit::class,
+            'login.rate.limit' => \App\Http\Middleware\LoginRateLimit::class,
+        ]);
+
+        // Exclude BOG payment callback from CSRF verification
+        $middleware->validateCsrfTokens(except: [
+            'payment/callback',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

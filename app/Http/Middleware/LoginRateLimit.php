@@ -52,10 +52,9 @@ class LoginRateLimit
                 'email' => $request->input('email'),
             ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Too many login attempts. Please try again in ' . self::MINUTES . ' minutes.',
-            ], 429);
+            return back()->withErrors([
+                'email' => 'Too many login attempts. Please try again in ' . self::MINUTES . ' minutes.',
+            ])->withInput($request->only('email'));
         }
 
         // Increment attempt counter

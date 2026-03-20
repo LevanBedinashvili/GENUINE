@@ -41,10 +41,12 @@
 <div class="particles-container" id="particlesContainer"></div>
 
 <section class="hero">
+    {{-- ვიდეო დროებით გამორთულია (67MB - dev სერვერზე ვერ იტვირთება)
     <video id="background-video" class="hero-video" autoplay muted loop playsinline>
         <source src="{{ asset('assets/images/video.mp4') }}" type="video/mp4">
         Your browser does not support the video tag.
     </video>
+    --}}
     
     <div class="hero-overlay"></div>
     

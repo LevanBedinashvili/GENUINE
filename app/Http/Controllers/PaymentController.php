@@ -52,7 +52,7 @@ class PaymentController extends Controller
                 'shop_item_id' => ['required', 'integer', 'exists:shop_items,id'],
                 'amount' => ['required', 'numeric', 'min:0.01', 'max:999999'],
                 'agree' => ['required', 'accepted'],
-                'recaptcha_token' => ['required_if:env,production', 'nullable', 'string'],
+                'recaptcha_token' => config('services.recaptcha.secret_key') ? ['required', 'string'] : ['nullable', 'string'],
             ], [
                 'username.required' => 'სახელი სერვერზე აუცილებელია',
                 'username.regex' => 'სახელი შეიძლება შეიცავდეს მხოლოდ ლათინურ ასოებს, რიცხვებს, _ და -',
@@ -81,7 +81,7 @@ class PaymentController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => 'გადახდის ინიციირება ვერ მოხერხდა',
+                'message' => config('app.debug') ? $e->getMessage() : 'გადახდის ინიციირება ვერ მოხერხდა',
             ], 500);
         }
     }

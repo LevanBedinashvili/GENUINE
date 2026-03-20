@@ -28,10 +28,11 @@ class SecurityHeaders
 
         $response->header('Content-Security-Policy', 
             "default-src 'self'; " .
-            "script-src 'self' https://cdn.jsdelivr.net https://kit.fontawesome.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; " .
-            "style-src 'self' https://cdn.jsdelivr.net https://fonts.googleapis.com 'unsafe-inline'; " .
-            "font-src 'self' https://fonts.gstatic.com https://kit-free.fontawesome.com; " .
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://kit.fontawesome.com https://www.google.com/recaptcha/ https://www.gstatic.com/recaptcha/; " .
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com https://cdn.web-fonts.ge https://cdnjs.cloudflare.com; " .
+            "font-src 'self' https://fonts.gstatic.com https://kit-free.fontawesome.com https://cdn.web-fonts.ge https://cdnjs.cloudflare.com; " .
             "img-src 'self' data: https:; " .
+            "media-src 'self'; " .
             "connect-src 'self' https://www.google.com/recaptcha/; " .
             "frame-src https://www.google.com/recaptcha/ https://payment.bog.ge https://payment.sandbox.bog.ge; " .
             "frame-ancestors 'none';"

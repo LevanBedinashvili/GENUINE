@@ -47,7 +47,7 @@ class AdminDashboardController extends Controller
 
     public function transactions(Request $request)
     {
-        $query = Transaction::with(['shopItem.category']);
+        $query = Transaction::with(['shopItem.category', 'account']);
 
         if ($request->filled('status')) {
             $status = $request->get('status');

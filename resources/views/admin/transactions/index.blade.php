@@ -285,7 +285,7 @@
             <thead>
                 <tr>
                     <th>ID</th>
-                    <th>Account ID</th>
+                    <th>Username</th>
                     <th>Status</th>
                     <th>Amount</th>
                     {{-- <th>Currency</th> --}}
@@ -300,7 +300,7 @@
                 @forelse($transactions as $tx)
                 <tr>
                     <td>#{{ $tx->id }}</td>
-                    <td>{{ $tx->account_id }}</td>
+                    <td>{{ $tx->metadata['username'] ?? $tx->account->playerName ?? 'N/A' }}</td>
                     <td><span class="badge badge-{{ $tx->status }}">{{ ucfirst($tx->status) }}</span></td>
                     <td>{{ number_format($tx->amount, 2) }} ₾</td>
                     {{-- <td>{{ $tx->getCurrencyLabel() }}</td> --}}

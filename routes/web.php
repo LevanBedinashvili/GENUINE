@@ -7,6 +7,7 @@ Route::get('/', function () {
 })->name('home');
 
 Route::get('/shop', [\App\Http\Controllers\ShopController::class, 'index'])->name('shop');
+Route::get('/shop/validate-username', [\App\Http\Controllers\ShopController::class, 'validateUsername'])->name('shop.validate-username');
 
 Route::prefix('payment')->name('payment.')->group(function () {
     Route::post('/create', [\App\Http\Controllers\PaymentController::class, 'createPayment'])

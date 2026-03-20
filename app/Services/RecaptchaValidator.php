@@ -7,19 +7,18 @@ use Illuminate\Support\Facades\Log;
 use RuntimeException;
 
 /**
- * reCAPTCHA Validator
- * Validates reCAPTCHA v3 tokens with production-safe failsafe
+ * reCAPTCHA v2 (Checkbox) Validator
  * SECURITY: Fails closed if reCAPTCHA not configured in production
  */
 class RecaptchaValidator
 {
     /**
-     * Validate reCAPTCHA token
-     * Production: Fails CLOSED if reCAPTCHA not configured (secure default)
+     * Validate reCAPTCHA v2 checkbox token
+     * Production: Fails CLOSED if not configured (secure default)
      * Development: Allows if not configured but logs warning
      *
-     * @param string $token reCAPTCHA token from client
-     * @return array Response with 'success', 'score' (0-1), 'action', 'challenge_ts'
+     * @param string $token reCAPTCHA response token from checkbox
+     * @return array Response with 'success', 'challenge_ts', 'hostname'
      * @throws RuntimeException if verification fails in production
      */
     public static function validate(string $token): array
@@ -32,9 +31,7 @@ class RecaptchaValidator
 
         // PRODUCTION: Must have reCAPTCHA configured
         if (config('app.env') === 'production' && !$secret) {
-            Log::critical('SECURITY: reCAPTCHA not configured in production!', [
-                'token_present' => !empty($token),
-            ]);
+            Log::critical('SECURITY: reCAPTCHA not configured in production!');
             throw new RuntimeException(
                 'reCAPTCHA configuration missing. Please contact support.'
             );
@@ -47,9 +44,8 @@ class RecaptchaValidator
             ]);
             return [
                 'success' => true,
-                'score' => 1.0,
-                'action' => 'createPayment',
                 'challenge_ts' => now()->toIso8601String(),
+                'hostname' => 'localhost',
             ];
         }
 
@@ -71,11 +67,10 @@ class RecaptchaValidator
 
             $data = $response->json();
 
-            // Log verification result
-            Log::channel('payments')->info('reCAPTCHA verified', [
+            Log::channel('payments')->info('reCAPTCHA v2 verified', [
                 'success' => $data['success'] ?? false,
-                'score' => $data['score'] ?? 'N/A',
-                'action' => $data['action'] ?? 'N/A',
+                'hostname' => $data['hostname'] ?? 'N/A',
+                'error_codes' => $data['error-codes'] ?? [],
             ]);
 
             return $data;
@@ -83,44 +78,21 @@ class RecaptchaValidator
         } catch (\Exception $e) {
             Log::channel('payments')->error('reCAPTCHA verification exception', [
                 'error' => $e->getMessage(),
-                'code' => $e->getCode(),
             ]);
 
-            // Fail closed - if verification fails, reject request
             throw new RuntimeException('reCAPTCHA verification failed: ' . $e->getMessage());
         }
     }
 
     /**
-     * Check if reCAPTCHA response indicates valid user
-     * Validates both success flag and score threshold
+     * Check if reCAPTCHA v2 response indicates valid user
+     * For v2 checkbox, success=true is sufficient (no score)
      *
      * @param array $recaptchaResponse Response from validate()
-     * @param float $minScore Minimum acceptable score (0-1, default 0.5)
-     * @return bool True if reCAPTCHA indicates valid user
+     * @return bool True if reCAPTCHA verification passed
      */
-    public static function isValid(array $recaptchaResponse, float $minScore = 0.5): bool
+    public static function isValid(array $recaptchaResponse): bool
     {
-        // Must have success flag and it must be true
-        if (!($recaptchaResponse['success'] ?? false)) {
-            return false;
-        }
-
-        // reCAPTCHA v2 (checkbox) does not return a score — success alone is sufficient
-        if (!isset($recaptchaResponse['score'])) {
-            return true;
-        }
-
-        // reCAPTCHA v3 — check score meets minimum threshold
-        $score = $recaptchaResponse['score'];
-        if ($score < $minScore) {
-            Log::channel('payments')->warning('reCAPTCHA score too low', [
-                'score' => $score,
-                'min_score' => $minScore,
-            ]);
-            return false;
-        }
-
-        return true;
+        return (bool) ($recaptchaResponse['success'] ?? false);
     }
 }

@@ -54,64 +54,9 @@ class ShopController extends Controller
     public function validateUsername(Request $request)
     {
         try {
-            // Get IP address
-            $ip = $request->ip();
-            
-            $banKey = "shop_banned_ip_{$ip}";
-            if (Cache::has($banKey)) {
-                Log::channel('payments')->alert('Banned IP attempted access', [
-                    'ip' => $ip,
-                    'user_agent' => $request->userAgent(),
-                ]);
-                
-                return response()->json([
-                    'valid' => false,
-                    'message' => 'თქვენი IP მოთხოვნა დაბლოკირებულია 24 საათის განმავლობაში',
-                    'exists' => false,
-                    'banned' => true
-                ], 403); // Forbidden
-            }
-            
-            $strictKey = "shop_validation_once_{$ip}";
-            
-            if (Cache::has($strictKey)) {
-                $remainingSeconds = 60;
-                
-                Log::channel('payments')->warning('IP rate limited - only one validation per minute', [
-                    'ip' => $ip,
-                    'remaining_seconds' => $remainingSeconds,
-                    'user_agent' => $request->userAgent(),
-                ]);
-                
-                return response()->json([
-                    'valid' => false,
-                    'message' => 'სახელის შემოწმება ერთხელ შედეგია დაშვებული ერთი წუთში. გთხოვთ ' . $remainingSeconds . ' წამის შემდეგ სცადოთ ხელახლა.',
-                    'exists' => false,
-                    'retry_after' => $remainingSeconds
-                ], 429);
-            }
-            
             $username = trim($request->input('username', ''));
             $amount = $request->input('amount');
             $categoryId = $request->input('category_id');
-            
-            if (in_array(strtolower($username), ['username', 'test', 'admin', 'user', 'player', 'name'])) {
-                $banKey = "shop_banned_ip_{$ip}";
-                Cache::put($banKey, true, 86400);
-                
-                Log::channel('payments')->alert('IP banned for 24 hours - suspicious username detected', [
-                    'username' => $username,
-                    'ip' => $ip,
-                    'user_agent' => $request->userAgent(),
-                ]);
-                
-                return response()->json([
-                    'valid' => false,
-                    'message' => 'თქვენი IP დაბლოკირებულია 24 საათის განმავლობაში ეჭვიანი აქტივობის გამო',
-                    'exists' => false,
-                    'banned' => true
-                ], 403); // Forbidden
-            }
             
             if (empty($username)) {
                 AuditLogger::logValidationAttempt([
@@ -196,24 +141,16 @@ class ShopController extends Controller
                 }
             }
             
-            $account = Account::where('playerName', $username)
-                ->select('id', 'playerName')
+            $account = Account::byPlayerName($username)
+                ->select('Id', 'playerName')
                 ->first();
             
             if ($account) {
-                $strictKey = "shop_validation_once_{$ip}";
-                Cache::put($strictKey, true, 60);
-                
                 AuditLogger::logValidationAttempt([
                     'username' => $username,
                     'amount' => $amount,
                     'result' => 'success',
                     'message' => 'ანგარიში იპოვნა',
-                ]);
-                
-                Log::channel('payments')->info('Username validation successful - rate limit set for 1 minute', [
-                    'ip' => $ip,
-                    'username' => $username,
                 ]);
                 
                 return response()->json([
@@ -223,9 +160,6 @@ class ShopController extends Controller
                     'username' => $account->playerName
                 ], 200);
             }
-            
-            $strictKey = "shop_validation_once_{$ip}";
-            Cache::put($strictKey, true, 60);
             
             AuditLogger::logValidationAttempt([
                 'username' => $username,

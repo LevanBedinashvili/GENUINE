@@ -695,7 +695,15 @@
         const wrapper = document.getElementById('recaptcha-wrapper');
         const siteKey = '{{ config('services.recaptcha.site_key') }}';
         
-        if (wrapper && siteKey) {
+        // If reCAPTCHA is not configured, skip gate and show form directly
+        if (!siteKey) {
+            recaptchaCompleted = true;
+            document.getElementById('recaptchaGate').style.display = 'none';
+            document.getElementById('formFieldsContainer').style.display = 'block';
+            return;
+        }
+
+        if (wrapper) {
             // Destroy existing widget if it exists
             if (recaptchaWidgetId !== null) {
                 try {
@@ -845,6 +853,7 @@
             document.getElementById('buyBtn').disabled = true;
             return;
         }
+
         
         if (isCurrency) {
             const amountValue = parseFloat(amountField.value);
@@ -871,6 +880,65 @@
         document.getElementById('usernameMessage').className = '';
     }
 
+    async function validateUsername() {
+        const usernameInput = document.getElementById('username');
+        const username = usernameInput.value.trim();
+        const statusEl = document.getElementById('usernameStatus');
+        const iconEl = document.getElementById('usernameStatusIcon');
+        const messageEl = document.getElementById('usernameMessage');
+
+        if (!username || username.length < 1) {
+            messageEl.textContent = 'სახელი აუცილებელია';
+            messageEl.className = 'error';
+            return false;
+        }
+
+        if (!/^[a-zA-Z0-9_-]{1,24}$/.test(username)) {
+            usernameInput.classList.add('invalid');
+            statusEl.style.display = 'flex';
+            iconEl.className = 'fas fa-times error';
+            messageEl.textContent = 'სახელი შეიძლება შეიცავდეს მხოლოდ ასოებს, ციფრებს, _ და -';
+            messageEl.className = 'error';
+            return false;
+        }
+
+        // Show loading state
+        usernameInput.classList.remove('valid', 'invalid');
+        usernameInput.classList.add('validating');
+        statusEl.style.display = 'flex';
+        iconEl.className = 'fas fa-spinner fa-spin loading';
+        messageEl.textContent = 'მოწმდება...';
+        messageEl.className = '';
+
+        try {
+            const response = await fetch(`{{ route('shop.validate-username') }}?username=${encodeURIComponent(username)}`);
+            const data = await response.json();
+
+            usernameInput.classList.remove('validating');
+
+            if (data.exists) {
+                usernameInput.classList.add('valid');
+                iconEl.className = 'fas fa-check success';
+                messageEl.textContent = data.message;
+                messageEl.className = 'success';
+                return true;
+            } else {
+                usernameInput.classList.add('invalid');
+                iconEl.className = 'fas fa-times error';
+                messageEl.textContent = data.message || 'ანგარიში ვერ მოიძებნა';
+                messageEl.className = 'error';
+                return false;
+            }
+        } catch (e) {
+            usernameInput.classList.remove('validating');
+            usernameInput.classList.add('invalid');
+            iconEl.className = 'fas fa-times error';
+            messageEl.textContent = 'სერვერთან კავშირის შეცდომა';
+            messageEl.className = 'error';
+            return false;
+        }
+    }
+
     function isRecaptchaCompleted() {
         const siteKey = '{{ config('services.recaptcha.site_key') }}';
         if (!siteKey) {
@@ -889,9 +957,19 @@
         
         try {
             const username = document.getElementById('username').value.trim();
-            
+
+            // Validate username exists before proceeding to payment
+            clearUsernameValidation();
             this.disabled = true;
-            this.textContent = 'დამუშავება...';
+            this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> მოწმდება...';
+
+            const usernameValid = await validateUsername();
+            if (!usernameValid) {
+                this.disabled = false;
+                this.textContent = originalText || 'ყიდვა';
+                return;
+            }
+
             this.innerHTML = '<i class="fas fa-spinner fa-spin"></i> დამუშავება...';
 
             const amountField = document.getElementById('amount');
